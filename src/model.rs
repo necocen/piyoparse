@@ -19,6 +19,7 @@ pub struct Record {
     pub date: NaiveDate,
     pub time: NaiveTime,
     pub data: RecordData,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub memo: Option<String>,
 }
 
@@ -160,9 +161,11 @@ impl RecordData {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Day {
     pub date: NaiveDate,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub child_info: Option<String>,
     pub records: Vec<Record>,
     pub summary: DaySummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub memo: Option<String>,
 }
 

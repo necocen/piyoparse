@@ -907,4 +907,50 @@ mod tests {
             serde_json::json!({ "kind": "other", "type_name": "寝る" })
         );
     }
+
+    #[test]
+    fn omits_absent_optional_fields_when_serializing() {
+        let record = Record {
+            date: NaiveDate::from_ymd_opt(2026, 5, 10).unwrap(),
+            time: NaiveTime::from_hms_opt(1, 35, 0).unwrap(),
+            data: RecordData::Pee,
+            memo: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(record).unwrap(),
+            serde_json::json!({
+                "date": "2026-05-10",
+                "time": "01:35:00",
+                "data": { "kind": "pee" }
+            })
+        );
+
+        let day = Day {
+            date: NaiveDate::from_ymd_opt(2026, 5, 10).unwrap(),
+            child_info: None,
+            records: Vec::new(),
+            summary: DaySummary::default(),
+            memo: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(day).unwrap(),
+            serde_json::json!({
+                "date": "2026-05-10",
+                "records": [],
+                "summary": {
+                    "breast_milk_left_minutes": 0,
+                    "breast_milk_right_minutes": 0,
+                    "formula_count": 0,
+                    "formula_total_ml": 0,
+                    "expressed_milk_count": 0,
+                    "expressed_milk_total_ml": 0,
+                    "sleep_minutes": 0,
+                    "pee_count": 0,
+                    "poop_count": 0
+                }
+            })
+        );
+    }
 }

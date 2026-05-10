@@ -19,7 +19,7 @@ The parser uses one tolerant parsing path for both iOS and Android exports. It d
 
 Each `Record` has `date`, `time`, `data`, and the free-text `memo` field from the export. The record type and raw detail text are represented inside `Record.data`.
 
-Record-specific parsed values are exposed through `Record.data`, a tagged enum. For WebAssembly/TypeScript callers it serializes as a discriminated object:
+Record-specific parsed values are exposed through `Record.data`, a tagged enum. For WebAssembly/TypeScript callers it serializes as a discriminated object. The generated npm package includes TypeScript definitions for these shapes.
 
 ```ts
 type BreastMilkOrder = "unspecified" | "left_then_right" | "right_then_left";
@@ -59,21 +59,26 @@ Known PiyoLog record types get dedicated variants. Unknown future types and cust
 
 PiyoLog export files can contain meaningful trailing spaces. Fixture `.txt` files under `tests/fixtures/` intentionally keep those spaces, so avoid editing them with tools that automatically trim trailing whitespace.
 
-## WebAssembly
+## WebAssembly and npm
 
-Build with `wasm-pack` and enable the `wasm` feature:
+Build the npm package with `wasm-pack` and enable the `wasm` feature:
 
 ```sh
 wasm-pack build --target bundler --features wasm
 ```
 
-Then call it from TypeScript:
+The generated `pkg/` directory is the npm package. Review it, then publish from that directory:
+
+```sh
+cd pkg
+npm publish
+```
+
+Then call it from TypeScript. `parsePiyolog` returns a typed `ParsedExport`; `parsePiyologJson` returns the JSON string form. The generated definitions also export supporting types such as `Day`, `PiyologRecord`, `RecordData`, and `DaySummary`.
 
 ```ts
-import init, { parsePiyolog, parsePiyologJson } from "./pkg/piyoparse";
+import { parsePiyolog, parsePiyologJson, type ParsedExport } from "piyoparse";
 
-await init();
-
-const parsed = parsePiyolog(exportText);
+const parsed: ParsedExport = parsePiyolog(exportText);
 const json = parsePiyologJson(exportText);
 ```
