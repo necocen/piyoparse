@@ -82,3 +82,10 @@ import { parsePiyolog, parsePiyologJson, type ParsedExport } from "piyoparse";
 const parsed: ParsedExport = parsePiyolog(exportText);
 const json = parsePiyologJson(exportText);
 ```
+
+The repository also includes a TypeScript runtime test that type-checks against the generated `.d.ts`, runs the generated Node.js wasm package, and parses a real fixture:
+
+```sh
+npm install
+npm run test:ts
+```
