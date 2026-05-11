@@ -1,8 +1,7 @@
 name: Release
 
-# Required repository secrets:
-# - CARGO_REGISTRY_TOKEN
-# - NPM_TOKEN
+# Configure Trusted Publishing for this workflow on crates.io and npm before
+# pushing a release tag.
 
 on:
   push:
@@ -12,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -50,7 +50,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
 
@@ -95,15 +95,17 @@ jobs:
           if (pkg.name !== "@necocen/piyoparse") throw new Error(`unexpected package name: ${pkg.name}`);
           if (pkg.version !== tagVersion) throw new Error(`npm package version ${pkg.version} does not match tag ${process.env.GITHUB_REF_NAME}`);'
 
+      - name: Authenticate to crates.io
+        id: crates_io_auth
+        uses: rust-lang/crates-io-auth-action@v1
+
       - name: Publish crates.io package
-        run: cargo publish --token "$CARGO_REGISTRY_TOKEN"
+        run: cargo publish
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
 
       - name: Publish npm package
         run: npm publish ./pkg --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
         run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
