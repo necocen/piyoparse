@@ -1,98 +1,129 @@
 # piyoparse
 
-Rust parser for PiyoLog export files. The crate can parse both iOS and Android export layouts, and can also be built for WebAssembly so TypeScript code can call it.
+`piyoparse` parses Japanese PiyoLog export text into structured data.
+
+- Rust crate: [piyoparse on crates.io](https://crates.io/crates/piyoparse)
+- TypeScript/WebAssembly package: [`@necocen/piyoparse` on npm](https://www.npmjs.com/package/@necocen/piyoparse)
+- Supports Japanese iOS and Android day/month exports
+- Preserves unknown future record types and renamed custom records as `other`
 
 This is an unofficial tool and is not affiliated with PiyoLog or its operating company. Do not contact PiyoLog support or the operating company about this library.  
 本ツールは非公式であり、ぴよログおよびその運営会社とは一切関係ありません。本ライブラリについて、ぴよログのサポート窓口や運営会社へのお問い合わせはお控えください。
 
-## Known limitations
+## Installation
 
-Only Japanese PiyoLog exports are currently supported and tested. This applies to both iOS and Android export layouts. Exports from other app languages/locales are not supported because record type names, summary labels, and detail text are locale-specific.
+### Rust
 
-Typed amount parsing currently supports only milliliters (`ml`). Other volume units, such as ounces, are not supported.
+```sh
+cargo add piyoparse
+```
 
-## Rust
+Or add it to `Cargo.toml`:
+
+```toml
+[dependencies]
+piyoparse = "0.1"
+```
+
+### TypeScript
+
+```sh
+npm install @necocen/piyoparse
+```
+
+## Rust Usage
 
 ```rust
-let input = std::fs::read_to_string("piyolog.txt")?;
-let parsed = piyoparse::parse(&input)?;
+use piyoparse::{parse, RecordData};
 
-for day in parsed.days {
-    println!("{}: {} records", day.date, day.records.len());
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let input = std::fs::read_to_string("piyolog.txt")?;
+    let parsed = parse(&input)?;
+
+    for day in &parsed.days {
+        println!("{}: {} records", day.date, day.records.len());
+
+        for record in &day.records {
+            if let RecordData::Formula { amount_ml, .. } = &record.data {
+                println!("formula at {}: {:?} ml", record.time, amount_ml);
+            }
+        }
+    }
+
+    Ok(())
 }
 ```
 
-The parser uses one tolerant parsing path for both iOS and Android exports. It does not try to classify the platform; if the export can be read, it is parsed.
-
-Each `Record` has `date`, `time`, `data`, and the free-text `memo` field from the export. The record type and raw detail text are represented inside `Record.data`.
-
-Record-specific parsed values are exposed through `Record.data`, a tagged enum. For WebAssembly/TypeScript callers it serializes as a discriminated object. The generated npm package includes TypeScript definitions for these shapes.
+## TypeScript Usage
 
 ```ts
-type BreastMilkOrder = "unspecified" | "left_then_right" | "right_then_left";
-type WithDetail = { detail?: string };
-
-type RecordData =
-  | ({
-      kind: "breastfeeding";
-      left_minutes?: number;
-      right_minutes?: number;
-      order: BreastMilkOrder;
-      amount_ml?: number;
-    } & WithDetail)
-  | ({ kind: "formula"; amount_ml?: number } & WithDetail)
-  | ({ kind: "expressed_breast_milk"; amount_ml?: number } & WithDetail)
-  | ({ kind: "drink"; amount_ml?: number } & WithDetail)
-  | ({ kind: "wake_up"; duration_minutes?: number } & WithDetail)
-  | ({ kind: "walks"; duration_minutes?: number } & WithDetail)
-  | ({ kind: "pumping"; amount_ml?: number } & WithDetail)
-  | ({ kind: "other"; type_name: string } & WithDetail)
-  | ({ kind:
-        | "poop"
-        | "body_temp" | "height" | "weight" | "head_size" | "chest_size"
-    } & WithDetail)
-  | {
-      kind:
-        | "baths" | "sleep" | "pee"
-        | "solid_food" | "snack" | "meal" | "cough" | "vomit"
-        | "rash" | "injury" | "medicine" | "hospital" | "vaccine"
-        | "milestone" | "others" | "notes";
-    };
-```
-
-Known PiyoLog record types get dedicated variants. Unknown future types and custom items are parsed as `other` with `type_name`, so parser updates are not required just to read a newer export.
-
-## Test fixtures
-
-PiyoLog export files can contain meaningful trailing spaces. Fixture `.txt` files under `tests/fixtures/` intentionally keep those spaces, so avoid editing them with tools that automatically trim trailing whitespace.
-
-## WebAssembly and npm
-
-Build the npm package with `wasm-pack` and enable the `wasm` feature:
-
-```sh
-wasm-pack build --target bundler --features wasm
-```
-
-The generated `pkg/` directory is the npm package. Review it, then publish from that directory:
-
-```sh
-cd pkg
-npm publish
-```
-
-Then call it from TypeScript. `parsePiyolog` returns a typed `ParsedExport`; `parsePiyologJson` returns the JSON string form. The generated definitions also export supporting types such as `Day`, `PiyologRecord`, `RecordData`, and `DaySummary`.
-
-```ts
-import { parsePiyolog, parsePiyologJson, type ParsedExport } from "piyoparse";
+import { parsePiyolog, type ParsedExport } from "@necocen/piyoparse";
 
 const parsed: ParsedExport = parsePiyolog(exportText);
-const json = parsePiyologJson(exportText);
+
+for (const record of parsed.days[0]?.records ?? []) {
+  if (record.data.kind === "formula") {
+    console.log(record.time, record.data.amount_ml);
+  }
+}
 ```
 
-The repository also includes a TypeScript runtime test that type-checks against the generated `.d.ts`, runs the generated Node.js wasm package, and parses a real fixture:
+`parsePiyolog` returns typed objects directly. `parsePiyologJson` is also available when a JSON string is easier to pass through an application boundary.
+
+## Data Model
+
+The parser returns a `ParsedExport`:
+
+- `ParsedExport.days`: parsed day blocks from a day or month export
+- `Day.records`: timestamped records for that day
+- `Day.summary`: summary totals printed by PiyoLog
+- `Record.memo`: free-text memo attached to a record, when present
+- `Record.data`: tagged record data
+
+Known PiyoLog record types are represented as `RecordData` variants in Rust and as discriminated objects in TypeScript. For example, `formula` records expose `amount_ml`, `wake_up` records expose `duration_minutes`, and `breastfeeding` records expose left/right minutes, order, and amount when they can be parsed.
+
+Unknown future record types and renamed custom items are parsed as `other` with the original `type_name` and raw `detail`, so the export can still be read even when the parser does not know the record type yet.
+
+## Supported Input
+
+`piyoparse` uses one tolerant parser for both iOS and Android export layouts. Callers do not need to detect the platform first.
+
+Currently supported:
+
+- Japanese PiyoLog exports
+- iOS and Android export text
+- Day exports and month exports
+- Typed parsing for common records such as breastfeeding, formula, expressed breast milk, drink, wake-up, walks, and pumping
+- Summary totals for breastfeeding, formula, expressed breast milk, sleep, pee, and poop
+
+## Known Limitations
+
+- Only Japanese PiyoLog exports are supported. Exports from other app languages/locales are not supported because record type names, summary labels, and detail text are locale-specific.
+- Typed amount parsing supports only milliliters (`ml`). Other volume units, such as ounces, are not parsed into `amount_ml`.
+- This crate parses the text export format. It is not a complete model of every field in the PiyoLog app.
+
+## Development
+
+Run the Rust tests:
+
+```sh
+cargo test
+cargo test --features wasm
+```
+
+Run the TypeScript runtime test:
 
 ```sh
 npm install
 npm run test:ts
 ```
+
+Build the WebAssembly npm package for local verification or publishing:
+
+```sh
+wasm-pack build --target bundler --scope necocen --features wasm
+```
+
+This step is for maintainers. Application code should install the published package with `npm install @necocen/piyoparse` instead of building it locally.
+
+PiyoLog export files can contain meaningful trailing spaces. Fixture `.txt` files under `tests/fixtures/` intentionally keep those spaces, so avoid editing them with tools that automatically trim trailing whitespace.
