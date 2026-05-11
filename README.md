@@ -2,7 +2,14 @@
 
 Rust parser for PiyoLog export files. The crate can parse both iOS and Android export layouts, and can also be built for WebAssembly so TypeScript code can call it.
 
-This is an unofficial tool and is not affiliated with PiyoLog or its operating company. Do not contact PiyoLog support or the operating company about this library.
+This is an unofficial tool and is not affiliated with PiyoLog or its operating company. Do not contact PiyoLog support or the operating company about this library.  
+本ツールは非公式であり、ぴよログおよびその運営会社とは一切関係ありません。本ライブラリについて、ぴよログのサポート窓口や運営会社へのお問い合わせはお控えください。
+
+## Known limitations
+
+Only Japanese PiyoLog exports are currently supported and tested. This applies to both iOS and Android export layouts. Exports from other app languages/locales are not supported because record type names, summary labels, and detail text are locale-specific.
+
+Typed amount parsing currently supports only milliliters (`ml`). Other volume units, such as ounces, are not supported.
 
 ## Rust
 

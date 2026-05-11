@@ -30,6 +30,37 @@ static RE_SUMMARY_PEE: LazyLock<Regex> =
 static RE_SUMMARY_POOP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^うんち合計\s*(\d+)回").unwrap());
 
+/// Parses a PiyoLog export.
+///
+/// The input may be a single-day export or a month export containing multiple
+/// day blocks. Both iOS-style and Android-style spacing are handled by the same
+/// parser. Missing or unknown record details are preserved as raw strings where
+/// possible rather than causing the whole export to fail.
+///
+/// # Errors
+///
+/// Returns [`ParseError::MissingDate`](crate::ParseError::MissingDate) when no
+/// day header can be found. Malformed date, time, or record lines return the
+/// corresponding [`ParseError`](crate::ParseError).
+///
+/// # Example
+///
+/// ```
+/// let export = "\
+/// 【ぴよログ】2026/5/10(日)
+/// 赤ちゃん (6か月21日)
+///
+/// 01:40   ミルク 180ml
+///
+/// ミルク合計 1回 180ml
+/// ";
+///
+/// let parsed = piyoparse::parse(export)?;
+/// assert_eq!(parsed.days[0].records.len(), 1);
+/// assert_eq!(parsed.days[0].summary.formula_total_ml, 180);
+///
+/// # Ok::<(), piyoparse::ParseError>(())
+/// ```
 pub fn parse(input: &str) -> Result<ParsedExport> {
     let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = normalized.lines().collect();
