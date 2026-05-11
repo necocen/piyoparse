@@ -121,7 +121,7 @@ npm run test:ts
 Build the WebAssembly npm package for local verification or publishing:
 
 ```sh
-wasm-pack build --target bundler --scope necocen --features wasm
+wasm-pack build --release --target bundler --scope necocen --features wasm
 ```
 
 This step is for maintainers. Application code should install the published package with `npm install @necocen/piyoparse` instead of building it locally.
