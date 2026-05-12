@@ -9,8 +9,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rust:
-    name: Rust lint and test
+  ci:
+    name: CI
     runs-on: ubuntu-latest
 
     steps:
@@ -37,42 +37,6 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
-      - name: Install just
-        run: cargo binstall --no-confirm just
-
-      - name: Run Rust checks
-        run: |
-          just check
-          just test-rust
-
-  typescript:
-    name: TypeScript wasm runtime test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Cache Cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-typescript-${{ hashFiles('Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-typescript-
-            ${{ runner.os }}-cargo-
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
       - name: Install Rust CLI tools
         run: cargo binstall --no-confirm just wasm-pack@0.14.0
 
@@ -83,5 +47,8 @@ jobs:
           cache: npm
           cache-dependency-path: tests/package-lock.json
 
-      - name: Run TypeScript and Node.js runtime tests
-        run: just test-js
+      - name: Run checks
+        run: just check
+
+      - name: Run tests
+        run: just test
