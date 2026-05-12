@@ -10,7 +10,7 @@ import {
   type ParsedExport,
   type PiyologRecord,
   type RecordData,
-} from "piyoparse";
+} from "@necocen/piyoparse";
 
 const fixture = readFileSync(
   join(__dirname, "..", "..", "fixtures", "android_export_day_with_header.txt"),
