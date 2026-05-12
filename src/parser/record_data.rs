@@ -142,7 +142,9 @@ fn trailing_ascii_number(value: &str) -> Option<u32> {
     let start = value
         .char_indices()
         .rev()
-        .find_map(|(index, character)| (!character.is_ascii_digit()).then_some(index + 1))
+        .find_map(|(index, character)| {
+            (!character.is_ascii_digit()).then_some(index + character.len_utf8())
+        })
         .unwrap_or(0);
 
     (start < end).then(|| value[start..end].parse().ok())?
@@ -233,5 +235,23 @@ fn order_from_sides(first: BreastMilkSide, second: BreastMilkSide) -> BreastMilk
         (BreastMilkSide::Left, BreastMilkSide::Right) => BreastMilkOrder::LeftThenRight,
         (BreastMilkSide::Right, BreastMilkSide::Left) => BreastMilkOrder::RightThenLeft,
         _ => BreastMilkOrder::Unspecified,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_amount_after_multibyte_separator() {
+        assert_eq!(extract_amount_ml("左　30ml"), Some(30));
+        assert_eq!(extract_amount_ml("搾母乳：110ml"), Some(110));
+    }
+
+    #[test]
+    fn trailing_ascii_number_starts_after_utf8_boundary() {
+        assert_eq!(trailing_ascii_number("左　30"), Some(30));
+        assert_eq!(trailing_ascii_number("合計:180"), Some(180));
+        assert_eq!(trailing_ascii_number("なし"), None);
     }
 }
