@@ -19,12 +19,9 @@ install-js-deps:
 build-npm:
     node scripts/build-npm-package.mjs
 
-build-npm-link:
-    node scripts/build-npm-package.mjs --link-dir tests/node_modules
-
 test-js:
     just install-js-deps
-    just build-npm-link
+    node scripts/build-npm-package.mjs --link-dir tests/node_modules
     npm --prefix tests test
 
 test:
