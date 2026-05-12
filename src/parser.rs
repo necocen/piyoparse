@@ -769,6 +769,8 @@ mod tests {
     const KNOWN_RECORD_TYPES_DAY: &str =
         include_str!("../tests/fixtures/known_record_types_day.txt");
     const MEMO_ONLY_RECORDS_DAY: &str = include_str!("../tests/fixtures/memo_only_records_day.txt");
+    const FULL_WIDTH_SPACING_DAY: &str =
+        include_str!("../tests/fixtures/full_width_spacing_day.txt");
 
     #[test]
     fn parses_ios_day() {
@@ -829,20 +831,7 @@ mod tests {
 
     #[test]
     fn parses_full_width_spacing() {
-        let parsed = parse(
-            "\
-【ぴよログ】　2026/5/10(日)
-赤ちゃん (6か月21日)
-
-01:00　　ミルク　180ml
-02:00　　母乳　左　5分　/　右　6分
-
-母乳合計　左　5分　/　右　6分
-ミルク合計　1回　180ml
-睡眠合計　1時間5分
-",
-        )
-        .unwrap();
+        let parsed = parse(FULL_WIDTH_SPACING_DAY).unwrap();
         let day = &parsed.days[0];
 
         assert_eq!(day.date, NaiveDate::from_ymd_opt(2026, 5, 10).unwrap());
