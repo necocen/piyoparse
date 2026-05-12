@@ -332,19 +332,22 @@ fn parse_date_line(line: &str) -> Result<Option<NaiveDate>> {
     scanner.strip_prefix("【ぴよログ】");
     scanner.skip_spaces();
 
-    let Some(year) = scanner.take_i32() else {
+    let Some(year_text) = scanner.take_ascii_digits_exact(4) else {
+        return Ok(None);
+    };
+    let year: i32 = year_text.parse().map_err(|_| ParseError::InvalidDate {
+        line: line.to_string(),
+    })?;
+    if !scanner.strip_prefix("/") {
+        return Ok(None);
+    }
+    let Some(month) = take_u32_with_digit_width(&mut scanner, 1, 2) else {
         return Ok(None);
     };
     if !scanner.strip_prefix("/") {
         return Ok(None);
     }
-    let Some(month) = scanner.take_u32() else {
-        return Ok(None);
-    };
-    if !scanner.strip_prefix("/") {
-        return Ok(None);
-    }
-    let Some(day) = scanner.take_u32() else {
+    let Some(day) = take_u32_with_digit_width(&mut scanner, 1, 2) else {
         return Ok(None);
     };
     if !scanner.strip_prefix("(") || !scanner.rest().contains(')') {
@@ -352,6 +355,18 @@ fn parse_date_line(line: &str) -> Result<Option<NaiveDate>> {
     }
 
     Ok(NaiveDate::from_ymd_opt(year, month, day))
+}
+
+fn take_u32_with_digit_width(
+    scanner: &mut Scanner<'_>,
+    min_digits: usize,
+    max_digits: usize,
+) -> Option<u32> {
+    let digits = scanner.take_ascii_digits()?;
+    (min_digits..=max_digits)
+        .contains(&digits.len())
+        .then_some(())?;
+    digits.parse().ok()
 }
 
 fn is_record_start(line: &str) -> bool {
@@ -523,6 +538,18 @@ mod tests {
                 detail: Some("左　5分　/　右　6分".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn ignores_date_like_lines_with_wrong_digit_widths() {
+        assert_eq!(
+            parse_date_line("2026/5/10(日)").unwrap(),
+            Some(NaiveDate::from_ymd_opt(2026, 5, 10).unwrap())
+        );
+        assert_eq!(parse_date_line("1/2/3(日)").unwrap(), None);
+        assert_eq!(parse_date_line("20265/1/1(日)").unwrap(), None);
+        assert_eq!(parse_date_line("2026/123/1(日)").unwrap(), None);
+        assert_eq!(parse_date_line("2026/1/123(日)").unwrap(), None);
     }
 
     #[test]

@@ -107,11 +107,6 @@ impl<'a> Scanner<'a> {
         Some(digits)
     }
 
-    /// Consumes an ASCII digit prefix and parses it as `i32`.
-    pub(super) fn take_i32(&mut self) -> Option<i32> {
-        self.take_ascii_digits()?.parse().ok()
-    }
-
     /// Consumes an ASCII digit prefix and parses it as `u32`.
     pub(super) fn take_u32(&mut self) -> Option<u32> {
         self.take_ascii_digits()?.parse().ok()
