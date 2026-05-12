@@ -1,34 +1,111 @@
 use crate::error::{ParseError, Result};
 use crate::model::{BreastMilkOrder, Day, DaySummary, ParsedExport, Record, RecordData};
 use chrono::{NaiveDate, NaiveTime};
-use regex::Regex;
-use std::sync::LazyLock;
 
-static RE_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^-{5,}$").unwrap());
-static RE_DATE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:【ぴよログ】)?\s*(\d{4})/(\d{1,2})/(\d{1,2})\([^)]*\)").unwrap()
-});
-static RE_RECORD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d{2}):(\d{2})\s{2,}(.+?)\s*$").unwrap());
-static RE_SUMMARY_START: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(母乳|ミルク|搾母乳|睡眠|おしっこ|うんち)合計").unwrap());
-static RE_AMOUNT_ML: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d+)ml").unwrap());
-static RE_DURATION_HM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d+)時間(\d+)分").unwrap());
-static RE_DURATION_M: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d+)分").unwrap());
-static RE_BREAST_MILK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"([左右])\s*(\d+)分\s*([/→←])\s*([左右])\s*(\d+)分").unwrap());
-static RE_SUMMARY_BREAST: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^母乳合計\s*左\s*(\d+)分\s*/\s*右\s*(\d+)分").unwrap());
-static RE_SUMMARY_FORMULA: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^ミルク合計\s*(\d+)回\s*(\d+)ml").unwrap());
-static RE_SUMMARY_EXPRESSED: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^搾母乳合計\s*(\d+)回\s*(\d+)ml").unwrap());
-static RE_SUMMARY_SLEEP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^睡眠合計\s*(\d+)時間(\d+)分").unwrap());
-static RE_SUMMARY_PEE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^おしっこ合計\s*(\d+)回").unwrap());
-static RE_SUMMARY_POOP: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^うんち合計\s*(\d+)回").unwrap());
+#[derive(Debug, Clone, Copy)]
+struct Scanner<'a> {
+    rest: &'a str,
+}
+
+impl<'a> Scanner<'a> {
+    fn new(rest: &'a str) -> Self {
+        Self { rest }
+    }
+
+    fn rest(&self) -> &'a str {
+        self.rest
+    }
+
+    fn strip_prefix(&mut self, prefix: &str) -> bool {
+        if let Some(rest) = self.rest.strip_prefix(prefix) {
+            self.rest = rest;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn skip_spaces(&mut self) {
+        self.rest = self.rest.trim_start_matches(is_piyolog_space);
+    }
+
+    fn take_space_run(&mut self) -> usize {
+        let mut count = 0;
+        let mut end = 0;
+
+        for (index, character) in self.rest.char_indices() {
+            if !is_piyolog_space(character) {
+                break;
+            }
+            count += 1;
+            end = index + character.len_utf8();
+        }
+
+        self.rest = &self.rest[end..];
+        count
+    }
+
+    fn take_char_if(&mut self, predicate: impl FnOnce(char) -> bool) -> Option<char> {
+        let mut characters = self.rest.char_indices();
+        let (_, character) = characters.next()?;
+        if !predicate(character) {
+            return None;
+        }
+
+        let next = characters
+            .next()
+            .map(|(index, _)| index)
+            .unwrap_or(self.rest.len());
+        self.rest = &self.rest[next..];
+        Some(character)
+    }
+
+    fn take_ascii_digits(&mut self) -> Option<&'a str> {
+        let end = self
+            .rest
+            .as_bytes()
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        if end == 0 {
+            return None;
+        }
+
+        let (digits, rest) = self.rest.split_at(end);
+        self.rest = rest;
+        Some(digits)
+    }
+
+    fn take_ascii_digits_exact(&mut self, length: usize) -> Option<&'a str> {
+        if self.rest.len() < length
+            || !self.rest.as_bytes()[..length]
+                .iter()
+                .all(|byte| byte.is_ascii_digit())
+        {
+            return None;
+        }
+
+        let (digits, rest) = self.rest.split_at(length);
+        self.rest = rest;
+        Some(digits)
+    }
+
+    fn take_i32(&mut self) -> Option<i32> {
+        self.take_ascii_digits()?.parse().ok()
+    }
+
+    fn take_u32(&mut self) -> Option<u32> {
+        self.take_ascii_digits()?.parse().ok()
+    }
+}
+
+fn is_piyolog_space(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\u{3000}')
+}
+
+fn trim_end_piyolog_spaces(value: &str) -> &str {
+    value.trim_end_matches(is_piyolog_space)
+}
 
 /// Parses a PiyoLog export.
 ///
@@ -186,17 +263,28 @@ fn parse_records(date: NaiveDate, lines: &[&str]) -> Result<Vec<Record>> {
 
 fn parse_record(date: NaiveDate, raw: &str) -> Result<Record> {
     let (first_line, continuation) = raw.split_once('\n').unwrap_or((raw, ""));
-    let captures = RE_RECORD
-        .captures(first_line)
-        .ok_or_else(|| ParseError::InvalidRecordLine {
+    let record_line =
+        parse_record_line(first_line).ok_or_else(|| ParseError::InvalidRecordLine {
             line: raw.to_string(),
         })?;
 
-    let time_text = format!("{}:{}", &captures[1], &captures[2]);
-    let time = NaiveTime::parse_from_str(&time_text, "%H:%M")
-        .map_err(|_| ParseError::InvalidTime { time: time_text })?;
+    let time_text = format!("{}:{}", record_line.hour, record_line.minute);
+    let hour = record_line
+        .hour
+        .parse()
+        .map_err(|_| ParseError::InvalidTime {
+            time: time_text.clone(),
+        })?;
+    let minute = record_line
+        .minute
+        .parse()
+        .map_err(|_| ParseError::InvalidTime {
+            time: time_text.clone(),
+        })?;
+    let time = NaiveTime::from_hms_opt(hour, minute, 0)
+        .ok_or(ParseError::InvalidTime { time: time_text })?;
 
-    let first_payload = captures[3].trim_end();
+    let first_payload = record_line.payload;
     let (record_type, detail, mut memo) = split_record_payload(first_payload);
     let continuation = clean_continuation(continuation);
     if let Some(continuation) = continuation {
@@ -213,6 +301,28 @@ fn parse_record(date: NaiveDate, raw: &str) -> Result<Record> {
         time,
         data,
         memo,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedRecordLine<'a> {
+    hour: &'a str,
+    minute: &'a str,
+    payload: &'a str,
+}
+
+fn parse_record_line(line: &str) -> Option<ParsedRecordLine<'_>> {
+    let mut scanner = Scanner::new(trim_end_piyolog_spaces(line));
+    let hour = scanner.take_ascii_digits_exact(2)?;
+    scanner.strip_prefix(":").then_some(())?;
+    let minute = scanner.take_ascii_digits_exact(2)?;
+    (scanner.take_space_run() >= 2).then_some(())?;
+
+    let payload = trim_end_piyolog_spaces(scanner.rest());
+    (!payload.is_empty()).then_some(ParsedRecordLine {
+        hour,
+        minute,
+        payload,
     })
 }
 
@@ -302,22 +412,22 @@ fn no_detail_record(record_type: &str, detail: Option<String>, data: RecordData)
 }
 
 fn split_record_payload(payload: &str) -> (String, Option<String>, Option<String>) {
-    let payload = payload.trim_end();
-    let Some(first_space) = payload.find(' ') else {
+    let payload = trim_end_piyolog_spaces(payload);
+    let Some((space_start, space_end, space_count)) = find_space_run(payload, 1) else {
         return (payload.to_string(), None, None);
     };
 
-    let record_type = payload[..first_space].to_string();
-    let remainder = &payload[first_space + 1..];
+    let record_type = payload[..space_start].to_string();
+    let remainder = &payload[space_end..];
     if remainder.trim().is_empty() {
         return (record_type, None, None);
     }
 
-    if remainder.starts_with(' ') {
+    if space_count >= 2 {
         return (record_type, None, clean_text(remainder));
     }
 
-    if let Some((start, end)) = find_ascii_space_run(remainder, 2) {
+    if let Some((start, end, _)) = find_space_run(remainder, 2) {
         let detail = clean_text(&remainder[..start]);
         let memo = clean_text(&remainder[end..]);
         return (record_type, detail, memo);
@@ -330,96 +440,205 @@ fn parse_summary(lines: &[&str]) -> DaySummary {
     let mut summary = DaySummary::default();
 
     for line in lines {
-        if let Some(captures) = RE_SUMMARY_BREAST.captures(line) {
-            summary.breast_milk_left_minutes = captures[1].parse().unwrap_or(0);
-            summary.breast_milk_right_minutes = captures[2].parse().unwrap_or(0);
-        } else if let Some(captures) = RE_SUMMARY_FORMULA.captures(line) {
-            summary.formula_count = captures[1].parse().unwrap_or(0);
-            summary.formula_total_ml = captures[2].parse().unwrap_or(0);
-        } else if let Some(captures) = RE_SUMMARY_EXPRESSED.captures(line) {
-            summary.expressed_milk_count = captures[1].parse().unwrap_or(0);
-            summary.expressed_milk_total_ml = captures[2].parse().unwrap_or(0);
-        } else if let Some(captures) = RE_SUMMARY_SLEEP.captures(line) {
-            let hours: u32 = captures[1].parse().unwrap_or(0);
-            let minutes: u32 = captures[2].parse().unwrap_or(0);
+        if let Some((left_minutes, right_minutes)) = parse_summary_breast(line) {
+            summary.breast_milk_left_minutes = left_minutes;
+            summary.breast_milk_right_minutes = right_minutes;
+        } else if let Some((count, total_ml)) = parse_summary_count_total(line, "ミルク合計") {
+            summary.formula_count = count;
+            summary.formula_total_ml = total_ml;
+        } else if let Some((count, total_ml)) = parse_summary_count_total(line, "搾母乳合計") {
+            summary.expressed_milk_count = count;
+            summary.expressed_milk_total_ml = total_ml;
+        } else if let Some((hours, minutes)) = parse_summary_sleep(line) {
             summary.sleep_minutes = hours * 60 + minutes;
-        } else if let Some(captures) = RE_SUMMARY_PEE.captures(line) {
-            summary.pee_count = captures[1].parse().unwrap_or(0);
-        } else if let Some(captures) = RE_SUMMARY_POOP.captures(line) {
-            summary.poop_count = captures[1].parse().unwrap_or(0);
+        } else if let Some(count) = parse_summary_count(line, "おしっこ合計") {
+            summary.pee_count = count;
+        } else if let Some(count) = parse_summary_count(line, "うんち合計") {
+            summary.poop_count = count;
         }
     }
 
     summary
 }
 
+fn parse_summary_breast(line: &str) -> Option<(u32, u32)> {
+    let mut scanner = Scanner::new(line);
+    scanner.strip_prefix("母乳合計").then_some(())?;
+    scanner.skip_spaces();
+    scanner.strip_prefix("左").then_some(())?;
+    scanner.skip_spaces();
+    let left_minutes = scanner.take_u32()?;
+    scanner.strip_prefix("分").then_some(())?;
+    scanner.skip_spaces();
+    scanner.strip_prefix("/").then_some(())?;
+    scanner.skip_spaces();
+    scanner.strip_prefix("右").then_some(())?;
+    scanner.skip_spaces();
+    let right_minutes = scanner.take_u32()?;
+    scanner.strip_prefix("分").then_some(())?;
+    Some((left_minutes, right_minutes))
+}
+
+fn parse_summary_count_total(line: &str, prefix: &str) -> Option<(u32, u32)> {
+    let mut scanner = Scanner::new(line);
+    scanner.strip_prefix(prefix).then_some(())?;
+    scanner.skip_spaces();
+    let count = scanner.take_u32()?;
+    scanner.strip_prefix("回").then_some(())?;
+    scanner.skip_spaces();
+    let total_ml = scanner.take_u32()?;
+    scanner.strip_prefix("ml").then_some(())?;
+    Some((count, total_ml))
+}
+
+fn parse_summary_sleep(line: &str) -> Option<(u32, u32)> {
+    let mut scanner = Scanner::new(line);
+    scanner.strip_prefix("睡眠合計").then_some(())?;
+    scanner.skip_spaces();
+    let hours = scanner.take_u32()?;
+    scanner.strip_prefix("時間").then_some(())?;
+    let minutes = scanner.take_u32()?;
+    scanner.strip_prefix("分").then_some(())?;
+    Some((hours, minutes))
+}
+
+fn parse_summary_count(line: &str, prefix: &str) -> Option<u32> {
+    let mut scanner = Scanner::new(line);
+    scanner.strip_prefix(prefix).then_some(())?;
+    scanner.skip_spaces();
+    let count = scanner.take_u32()?;
+    scanner.strip_prefix("回").then_some(())?;
+    Some(count)
+}
+
 fn parse_date_line(line: &str) -> Result<Option<NaiveDate>> {
-    let Some(captures) = RE_DATE.captures(line.trim_end()) else {
+    let mut scanner = Scanner::new(line.trim_end());
+    scanner.strip_prefix("【ぴよログ】");
+    scanner.skip_spaces();
+
+    let Some(year) = scanner.take_i32() else {
         return Ok(None);
     };
-
-    let year: i32 = captures[1].parse().map_err(|_| ParseError::InvalidDate {
-        line: line.to_string(),
-    })?;
-    let month: u32 = captures[2].parse().map_err(|_| ParseError::InvalidDate {
-        line: line.to_string(),
-    })?;
-    let day: u32 = captures[3].parse().map_err(|_| ParseError::InvalidDate {
-        line: line.to_string(),
-    })?;
+    if !scanner.strip_prefix("/") {
+        return Ok(None);
+    }
+    let Some(month) = scanner.take_u32() else {
+        return Ok(None);
+    };
+    if !scanner.strip_prefix("/") {
+        return Ok(None);
+    }
+    let Some(day) = scanner.take_u32() else {
+        return Ok(None);
+    };
+    if !scanner.strip_prefix("(") || !scanner.rest().contains(')') {
+        return Ok(None);
+    }
 
     Ok(NaiveDate::from_ymd_opt(year, month, day))
 }
 
 fn is_record_start(line: &str) -> bool {
-    RE_RECORD.is_match(line.trim_end())
+    parse_record_line(line.trim_end()).is_some()
 }
 
 fn is_summary_start(line: &str) -> bool {
-    RE_SUMMARY_START.is_match(line.trim_end())
+    let line = line.trim_end();
+    line.starts_with("母乳合計")
+        || line.starts_with("ミルク合計")
+        || line.starts_with("搾母乳合計")
+        || line.starts_with("睡眠合計")
+        || line.starts_with("おしっこ合計")
+        || line.starts_with("うんち合計")
 }
 
 fn is_separator(line: &str) -> bool {
-    RE_SEPARATOR.is_match(line.trim())
+    let trimmed = line.trim();
+    trimmed.len() >= 5 && trimmed.bytes().all(|byte| byte == b'-')
 }
 
-fn find_ascii_space_run(value: &str, min_len: usize) -> Option<(usize, usize)> {
-    let bytes = value.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b' ' {
-            index += 1;
+fn find_space_run(value: &str, min_len: usize) -> Option<(usize, usize, usize)> {
+    let mut run_start = None;
+    let mut run_count = 0;
+    let mut run_end = 0;
+
+    for (index, character) in value.char_indices() {
+        if is_piyolog_space(character) {
+            run_start.get_or_insert(index);
+            run_count += 1;
+            run_end = index + character.len_utf8();
             continue;
         }
 
-        let start = index;
-        while index < bytes.len() && bytes[index] == b' ' {
-            index += 1;
+        if run_count >= min_len {
+            return Some((run_start?, run_end, run_count));
         }
-        if index - start >= min_len {
-            return Some((start, index));
+        run_start = None;
+        run_count = 0;
+    }
+
+    (run_count >= min_len).then_some((run_start?, run_end, run_count))
+}
+
+fn extract_amount_ml(value: &str) -> Option<u32> {
+    for (ml_index, _) in value.match_indices("ml") {
+        if let Some(amount) = trailing_ascii_number(&value[..ml_index]) {
+            return Some(amount);
         }
     }
 
     None
 }
 
-fn extract_amount_ml(value: &str) -> Option<u32> {
-    RE_AMOUNT_ML
-        .captures(value)
-        .and_then(|captures| captures[1].parse().ok())
-}
-
 fn extract_duration_minutes(value: &str) -> Option<u32> {
-    if let Some(captures) = RE_DURATION_HM.captures(value) {
-        let hours: u32 = captures[1].parse().ok()?;
-        let minutes: u32 = captures[2].parse().ok()?;
-        return Some(hours * 60 + minutes);
+    let mut in_digits = false;
+    for (index, character) in value.char_indices() {
+        if character.is_ascii_digit() {
+            if !in_digits {
+                let mut scanner = Scanner::new(&value[index..]);
+                if let Some(hours) = scanner.take_u32()
+                    && scanner.strip_prefix("時間")
+                    && let Some(minutes) = scanner.take_u32()
+                    && scanner.strip_prefix("分")
+                {
+                    return Some(hours * 60 + minutes);
+                }
+            }
+            in_digits = true;
+        } else {
+            in_digits = false;
+        }
     }
 
-    RE_DURATION_M
-        .captures(value)
-        .and_then(|captures| captures[1].parse().ok())
+    let mut in_digits = false;
+    for (index, character) in value.char_indices() {
+        if character.is_ascii_digit() {
+            if !in_digits {
+                let mut scanner = Scanner::new(&value[index..]);
+                if let Some(minutes) = scanner.take_u32()
+                    && scanner.strip_prefix("分")
+                {
+                    return Some(minutes);
+                }
+            }
+            in_digits = true;
+        } else {
+            in_digits = false;
+        }
+    }
+
+    None
+}
+
+fn trailing_ascii_number(value: &str) -> Option<u32> {
+    let end = value.len();
+    let start = value
+        .char_indices()
+        .rev()
+        .find_map(|(index, character)| (!character.is_ascii_digit()).then_some(index + 1))
+        .unwrap_or(0);
+
+    (start < end).then(|| value[start..end].parse().ok())?
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,12 +655,34 @@ struct BreastMilkParts {
 }
 
 fn extract_breast_milk_parts(value: &str) -> Option<BreastMilkParts> {
-    let captures = RE_BREAST_MILK.captures(value)?;
-    let first_side = parse_breast_milk_side(&captures[1])?;
-    let first_minutes: u32 = captures[2].parse().ok()?;
-    let separator = &captures[3];
-    let second_side = parse_breast_milk_side(&captures[4])?;
-    let second_minutes: u32 = captures[5].parse().ok()?;
+    for (index, character) in value.char_indices() {
+        if matches!(character, '左' | '右')
+            && let Some(parts) = extract_breast_milk_parts_at(&value[index..])
+        {
+            return Some(parts);
+        }
+    }
+
+    None
+}
+
+fn extract_breast_milk_parts_at(value: &str) -> Option<BreastMilkParts> {
+    let mut scanner = Scanner::new(value);
+    let first_side = scanner
+        .take_char_if(|character| matches!(character, '左' | '右'))
+        .and_then(parse_breast_milk_side)?;
+    scanner.skip_spaces();
+    let first_minutes = scanner.take_u32()?;
+    scanner.strip_prefix("分").then_some(())?;
+    scanner.skip_spaces();
+    let separator = scanner.take_char_if(|character| matches!(character, '/' | '→' | '←'))?;
+    scanner.skip_spaces();
+    let second_side = scanner
+        .take_char_if(|character| matches!(character, '左' | '右'))
+        .and_then(parse_breast_milk_side)?;
+    scanner.skip_spaces();
+    let second_minutes = scanner.take_u32()?;
+    scanner.strip_prefix("分").then_some(())?;
 
     let mut left_minutes = None;
     let mut right_minutes = None;
@@ -459,23 +700,23 @@ fn extract_breast_milk_parts(value: &str) -> Option<BreastMilkParts> {
     })
 }
 
-fn parse_breast_milk_side(value: &str) -> Option<BreastMilkSide> {
+fn parse_breast_milk_side(value: char) -> Option<BreastMilkSide> {
     match value {
-        "左" => Some(BreastMilkSide::Left),
-        "右" => Some(BreastMilkSide::Right),
+        '左' => Some(BreastMilkSide::Left),
+        '右' => Some(BreastMilkSide::Right),
         _ => None,
     }
 }
 
 fn extract_breast_milk_order(
     first_side: BreastMilkSide,
-    separator: &str,
+    separator: char,
     second_side: BreastMilkSide,
 ) -> BreastMilkOrder {
     match separator {
-        "/" => BreastMilkOrder::Unspecified,
-        "→" => order_from_sides(first_side, second_side),
-        "←" => order_from_sides(second_side, first_side),
+        '/' => BreastMilkOrder::Unspecified,
+        '→' => order_from_sides(first_side, second_side),
+        '←' => order_from_sides(second_side, first_side),
         _ => BreastMilkOrder::Unspecified,
     }
 }
@@ -584,6 +825,47 @@ mod tests {
         assert_eq!(day.records.len(), 4);
         assert_eq!(day.summary.formula_total_ml, 170);
         assert_eq!(day.records[3].memo.as_deref(), Some("記録メモ1"));
+    }
+
+    #[test]
+    fn parses_full_width_spacing() {
+        let parsed = parse(
+            "\
+【ぴよログ】　2026/5/10(日)
+赤ちゃん (6か月21日)
+
+01:00　　ミルク　180ml
+02:00　　母乳　左　5分　/　右　6分
+
+母乳合計　左　5分　/　右　6分
+ミルク合計　1回　180ml
+睡眠合計　1時間5分
+",
+        )
+        .unwrap();
+        let day = &parsed.days[0];
+
+        assert_eq!(day.date, NaiveDate::from_ymd_opt(2026, 5, 10).unwrap());
+        assert_eq!(day.summary.breast_milk_left_minutes, 5);
+        assert_eq!(day.summary.breast_milk_right_minutes, 6);
+        assert_eq!(day.summary.formula_total_ml, 180);
+        assert_eq!(
+            day.records[0].data,
+            RecordData::Formula {
+                amount_ml: Some(180),
+                detail: Some("180ml".to_string()),
+            }
+        );
+        assert_eq!(
+            day.records[1].data,
+            RecordData::Breastfeeding {
+                left_minutes: Some(5),
+                right_minutes: Some(6),
+                order: BreastMilkOrder::Unspecified,
+                amount_ml: None,
+                detail: Some("左　5分　/　右　6分".to_string()),
+            }
+        );
     }
 
     #[test]
