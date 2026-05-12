@@ -1,0 +1,11 @@
+{
+  "name": "piyoparse-tests",
+  "private": true,
+  "scripts": {
+    "test": "tsc -p ts/tsconfig.json && node ts/dist/parse.test.js && node node/require.cjs && node node/import.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -70,6 +70,12 @@ for (const record of parsed.days[0]?.records ?? []) {
 
 `parsePiyolog` returns typed objects directly. `parsePiyologJson` is also available when a JSON string is easier to pass through an application boundary.
 
+The npm package can be used from browser bundlers and Node.js. Node.js can load the package with either ESM `import` or CommonJS `require`.
+
+```js
+const { parsePiyolog } = require("@necocen/piyoparse");
+```
+
 ## Data Model
 
 The parser returns a `ParsedExport`:
@@ -104,24 +110,29 @@ Currently supported:
 
 ## Development
 
-Run the Rust tests:
+Install the local task tools:
 
 ```sh
-cargo test
-cargo test --features wasm
+cargo install just
+cargo install wasm-pack --version 0.14.0 --locked
 ```
 
-Run the TypeScript runtime test:
+Run all tests:
 
 ```sh
-npm install
-npm run test:ts
+just test
+```
+
+Run Rust lint and wasm target checks:
+
+```sh
+just check
 ```
 
 Build the WebAssembly npm package for local verification or publishing:
 
 ```sh
-wasm-pack build --release --target bundler --scope necocen --features wasm
+just build-npm
 ```
 
 This step is for maintainers. Application code should install the published package with `npm install @necocen/piyoparse` instead of building it locally.
